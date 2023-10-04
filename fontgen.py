@@ -22,11 +22,11 @@ def line_to_num_array(line, num):
         index += 1
     return num_array
 
-def get_array_line_data(hex_data):
+def get_array_line_data(hex_data, curr_chr):
     line_to_write = ''.join(' ' for _ in range(SPACES))
     for val in hex_data:
         line_to_write += (val + ', ')
-    return line_to_write + '0x00,\n'
+    return line_to_write + '0x00, // {0}\n'.format(chr(curr_chr))
 
 def get_char_byte_data(bitmap_data):
     ascii_bytes = [0 for _ in range(CHAR_WIDTH)]
@@ -38,7 +38,12 @@ def get_char_byte_data(bitmap_data):
     return ['0x{:02x}'.format(ai_byte).upper() for ai_byte in ascii_bytes]
 
 def convert(content):
+    start_chr = 0
     with open(OUTPUT_FILE, 'w') as writer:
+        for _ in range(0, 37):
+            writer.write('    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // {0}\n'.format(start_chr))
+            start_chr = start_chr + 1
+
         bitmap_data = []
         pow_of_two = 1
         count = 0
@@ -46,7 +51,7 @@ def convert(content):
             length = len(line)
             if length <= 1:
                 data = get_char_byte_data(bitmap_data)
-                writer.write(get_array_line_data(data))
+                writer.write(get_array_line_data(data, start_chr + count))
                 bitmap_data.clear()
                 pow_of_two = 1
                 count += 1
