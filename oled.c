@@ -5,17 +5,9 @@
 #include <linux/i2c.h>
 #include <linux/types.h>
 #include <linux/delay.h>
+#include "types.h"
 #include "font.h"
 
-/* Constants */
-#define DEV_NAME "oled"
-#define OLED_COLS 128
-#define OLED_ROWS 64
-#define I2C_BUS   0x01
-#define OLED_ADDR 0x3C
-#define KERNEL_OUT(...) { printk(DEV_NAME": ", __VA_ARGS__); }
-
-/* OLED 1306 COMMANDS */
 
 /* Command macros */
 #define CMD_SET_LCA_PAM(val) (val & 0x0F)
@@ -123,6 +115,17 @@ static struct file_operations fops = {
     .write = oled_dev_write
 };
 
+static uint8_t verify_input_for_scrl(OledPageAddr start_addr, OledPageAddr end_addr, OledFrameFreq freq) {
+    uint8_t rc = OLED_NO_ERRORS;
+    if ((start_addr >= OLED_PAGE0 && start_addr <= OLED_PAGE7) &&
+        (end_addr >= OLED_PAGE0 && end_addr <= OLED_PAGE7) &&
+        (end_addr >= start_addr) && (freq >= OLED_TIME_INT_5_FRAMES &&
+        freq <= OLED_TIME_INT_2_FRAMES)) {
+        rc = OLED_INPUT_ERROR;
+    }
+    return rc;
+}
+
 static ssize_t oled_dev_write(struct file *file, const char *buff, size_t len, loff_t *offset) {
     static int8_t index;
     static int8_t ascii_char;
@@ -154,6 +157,252 @@ static ssize_t oled_dev_write(struct file *file, const char *buff, size_t len, l
     }
 
     return len;
+}
+
+static void cmd_set_contrast_ctrl(uint8_t value) {
+    uint16_t command = (0x81 << 8) | value;
+    oled_i2c_write_datablock(command, sizeof(command));
+}
+
+static void cmd_reset_contrast(void) {
+    oled_i2c_write_char(0x7F);
+}
+
+static uint8_t cmd_set_entire_display(OledEntireDisplay ed) {
+    uint8_t rc = 1;
+    char command[1];
+    switch(ed) {
+        case OLED_RESUME_TO_RAM:
+        case OLED_ENTIRE_DISPLAY_ON:
+            command[0] = ed;
+            rc = oled_i2c_write_datablock(command, sizeof(command));
+            break;
+        default:
+            break;
+    }
+    return rc;
+}
+
+static void cmd_set_display_mode(OledMode mode) {
+    uint8_t rc = 1;
+    char command[1];
+    switch(mode) {
+        case OLED_MODE_NORMAL:
+        case OLED_MODE_INVERSE:
+            command[0] = mode;
+            rc = oled_i2c_write_datablock(command, sizeof(command));
+            break;
+        default:
+            break;
+    }
+    return rc;
+}
+
+static uint8_t cmd_set_display(OledPower power) {
+    uint8_t rc = 1;
+    char command[1];
+    switch(power) {
+        case OLED_POWER_OFF:
+        case OLED_POWER_ON:
+            command[0] = power;
+            rc = oled_i2c_write_datablock(command, sizeof(command));
+            break;
+        default:
+            break;
+    }
+    return rc;
+}
+
+static uint8_t cmd_setup_hrz_scrl(OledScrollHrz scroll_hrz, OledPageAddr start_addr, OledFrameFreq freq, OledPageAddr end_addr) {
+    uint8_t rc = OLED_NO_ERRORS;
+    uint8_t input_error = OLED_NO_ERRORS;
+
+    switch(scroll_hrz) {
+        case OLED_SCROLL_HOTIZONTAL_RIGHT:
+        case OLED_SCROLL_HOTIZONTAL_LEFT:
+            input_error = verify_input_for_scrl(start_addr, end_addr, freq);
+            break;
+        default:
+            input_error = OLED_INPUT_ERROR;
+            break;
+    }
+
+    if (input_error == OLED_NO_ERRORS) {
+        uint8_t command = { scroll_hrz, 0x0, start_addr, freq, end_addr, 0x0, 0xFF};
+        rc = oled_i2c_write_datablock(command, sizeof(command));
+    }
+
+    return rc;
+}
+
+static uint8_t cmd_setup_vh_scrl(OledScrollVH scroll_vh, OledPageAddr start_addr, OledFrameFreq freq, OledPageAddr end_addr) {
+    uint8_t rc = OLED_NO_ERRORS;
+    uint8_t input_error = OLED_NO_ERRORS;
+
+    switch(scroll_vh) {
+        case OLED_SCROLL_VERT_HRZ_RIGHT:
+        case OLED_SCROLL_VERT_HRZ_LEFT:
+            input_error = verify_input_for_scrl(start_addr, end_addr, freq);
+            break;
+        default:
+            input_error = OLED_INPUT_ERROR;
+            break;
+    }
+
+    if (input_error == OLED_NO_ERRORS) {
+        uint8_t command = { scroll_vh, 0x0, start_addr, freq, end_addr, 0x0, 0xFF};
+        rc = oled_i2c_write_datablock(command, sizeof(command));
+    }
+
+    return rc;
+}
+
+static uint8_t cmd_switch_scroll(OledScrollState state) {
+    uint8_t rc;
+    uint8_t command[1];
+    switch(state) {
+        case OLED_DEACT_SCROLL:
+        case OLED_ACT_SCROLL:
+            command[0] = state;
+            rc = oled_i2c_write_datablock(command, sizeof(command));
+            break;
+        default:
+            break;
+    }
+
+    return rc;
+}
+
+static uint8_t cmd_set_vert_scrl_area(uint8_t rows_tfa, uint8_t rows_sa) {
+    uint8_t rc;
+    rows_tfa &= 0x1F; /* Rows in top fixed area */
+    rows_sa &= 0x3F; /* Rows in scroll area */
+
+    uint8_t command[3] = { 0xA3, rows_tfa, rows_sa};
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_lcsa_pam(uint8_t lcsa) {
+    uint8_t rc;
+    uint8_t command[1];
+    /* Set lower column start address for page addressing mode */
+    command[0] = lcsa & 0xF;
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_hcsa_pam(uint8_t hcsa) {
+    uint8_t rc;
+    uint8_t command[1] = { 0x10 | (hcsa & 0xF) };
+    /* Set higher column start address for page addressing mode */
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_mem_addr_mode(OledMemAddrMode mode) {
+    uint8_t rc;
+    uint8_t command[2] = { 0x20, mode & 0x3 };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_col_addr(uint8_t col_start_addr, uint8_t col_end_addr) {
+    uint8_t rc;
+    uint8_t command[3] = { 0x21, col_start_addr & 0x7F, col_end_addr & 0x7F }; 
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_page_addr(OledPageAddr start_addr, OledPageAddr end_addr) {
+    uint8_t rc;
+    uint8_t command[3] = { 0x22, start_addr, end_addr };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_psa_pam(OledPageAddr start_addr) {
+    /* Set page start address for page addressing mode */
+    uint8_t rc;
+    uint8_t command[1] = { 0xB0 | start_addr };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_display_sl(uint8_t display_sl) {
+    /* Set display start line */
+    uint8_t rc;
+    uint8_t command[1] = { 0x40 | (display_sl & 0x3F) };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_seg_remap(uint8_t lsb) {
+    uint8_t rc;
+    uint8_t command[1] = { 0xA0 | (lsb & 0x1) };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc; 
+}
+
+static uint8_t cmd_set_mux_ratio(uint8_t mux_ratio) {
+    uint8_t rc;
+    if (mux_ratio < 0xF) {
+        /* Invalid entry */
+        return 1;
+    }
+    uint8_t command[2] = { 0xA8, mux_ratio & 0x1F };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t set_com_osd(OledOSDMode osd_mode) {
+    /* Set COM output scan direction */
+    uint8_t rc;
+    uint8_t command[1] = { osd_mode };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t set_display_offset(uint8_t offset) {
+    uint8_t rc;
+    uint8_t command[2] = { 0xD3, offset & 0x3F };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t set_com_pins(uint8_t pin_conf, uint8_t lr_remap) {
+    uint8_t rc;
+    uint8_t pin_hw_conf = 0x2;
+    pin_hw_conf |= (pin_conf & 0x1) << 4;
+    pin_hw_conf |= (lr_remap & 0x1) << 5;
+    uint8_t command[2] = { 0xDA, pin_hw_conf};
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t set_display_clk(uint8_t divide_ratio, uint8_t osc_freq) {
+    uint8_t rc;
+    uint8_t clk_conf = divide_ratio & 0xF;
+    clk_conf |= (osc_freq & 0xF) << 4;
+    uint8_t command[2] = { 0xD5, clk_conf};
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t set_pre_charge_per(uint8_t phase_1, uint8_t phase_2) {
+    uint8_t rc;
+    uint8_t pre_charge_per = phase_1 & 0xF;
+    pre_charge_per |= (phase_2 & 0xF) << 4;
+    uint8_t command[2] = { 0xD9, pre_charge_per};
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t set_vcomh_deselect_lvl(uint8_t deselect_lvl) {
+    uint8_t rc;
+    uint8_t command[2] = { 0xDB, (deselect_lvl << 4) & 0x70 };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
 }
 
 static int32_t oled_drv_probe(struct i2c_client * client, const struct i2c_device_id * dev_id) {
@@ -249,7 +498,7 @@ static int32_t __init oled_init(void) {
 }
 
 static void __exit oled_exit(void) {
-    //oled_i2c_clear_display(0);
+    oled_i2c_clear_display(0);
     //oled_i2c_clear_screen();
     oled_i2c_display(0xE4);
     unregister_chrdev(major, DEV_NAME);
