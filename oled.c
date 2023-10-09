@@ -50,43 +50,7 @@ static uint32_t oled_i2c_write_char(uint8_t);
 static uint32_t oled_i2c_write_datablock(const char *, ssize_t);
 static void oled_i2c_clear_display(uint8_t);
 
-static char TEXT_BUFFER[1024] = { 0 };
-
-static const uint8_t INIT_SEQ[] = {
-    CMD_SET_MPX_RTO, 0x3F,
-    CMD_SET_DPL_OFT, 0x00,
-    CMD_SET_STA_LNE(0x40),
-    CMD_SET_SEG_RMA(1),
-    CMD_SET_COM_OSD(8),
-    CMD_SET_COM_PHS, 0x12,
-    CMD_SET_CCT_BA0, 0xFF,
-    CMD_COM_EDP_ONN,
-    CMD_SET_NRM_DPL,
-    CMD_SET_DPL_CDR, 0x80,
-    CMD_CHN_PMP_SET, 0x14,
-    CMD_SET_DPL_DON,
-    // CMD_SET_LCA_PAM(0),
-    // CMD_SET_DPL_DOF,
-    // CMD_SET_DPL_CDR, 0x80,
-    // CMD_SET_MPX_RTO, 0x3F,
-    // CMD_SET_DPL_OFT, 0x00,
-    // CMD_SET_STA_LNE(0x40),
-    // CMD_CHN_PMP_SET, 0x14,
-    // CMD_SET_ADD_MOD, 0x00,
-    // CMD_SET_SEG_RMA(1),
-    // CMD_SET_COM_OSD(8),
-    // CMD_SET_COM_PHS, 0x12,
-    // CMD_SET_CCT_BA0, 0x80,
-    // CMD_SET_PRC_PER, 0xF1,
-    // CMD_VCO_DSL_LVL, 0x20,
-    // CMD_COM_EDP_ONN,
-    // CMD_SET_NRM_DPL,
-    // CMD_GAC_DEA_SCR,
-    // CMD_SET_DPL_DON,
-};
-
-static const uint8_t ENDL[] = { 0x22, 0x00, 0x10 };
-
+static uint8_t TextBuffer[1024] = { 0 };
 static bool is_busy = FALSE;
 static uint8_t lines_written = 1U;
 static uint8_t chars_per_line = 0U;
@@ -128,44 +92,29 @@ static uint8_t verify_input_for_scrl(OledPageAddr start_addr, OledPageAddr end_a
 
 static ssize_t oled_dev_write(struct file *file, const char *buff, size_t len, loff_t *offset) {
     static int8_t index;
-    static int8_t ascii_char;
+    static uint8_t ascii_char;
     if (buff != NULL) {
-        memcpy(TEXT_BUFFER, buff, len);
+        memcpy(TextBuffer, buff, len);
     }
     for (index = 0; index < len; index++) {
-        ascii_char = TEXT_BUFFER[index];
+        ascii_char = TextBuffer[index];
         oled_i2c_write_char(ascii_char);
-
-        if (ascii_char == 'x') {
-            //oled_i2c_set_cursor(5, 0);
-        }
-
-        //     oled_i2c_write_datablock(ENDL, sizeof(ENDL));
-        //     oled_i2c_clear_display(21 - chars_per_line);
-        //     chars_per_line = 0U;
-        // }
-
-        // if (chars_per_line++ >= 21) {
-        //     chars_per_line = 0U;
-        //     lines_written++;
-        // }
-
-        // if (lines_written >= 8) {
-        //     lines_written = 0U;
-        //     oled_i2c_clear_display(0);
-        // }
     }
 
     return len;
 }
 
-static void cmd_set_contrast_ctrl(uint8_t value) {
-    uint16_t command = (0x81 << 8) | value;
-    oled_i2c_write_datablock(command, sizeof(command));
+static uint8_t cmd_set_contrast_ctrl(uint8_t value) {
+    uint8_t rc;
+    uint8_t command[2] = { 0x81, value };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
 }
 
 static void cmd_reset_contrast(void) {
-    oled_i2c_write_char(0x7F);
+    uint8_t rc;
+    rc = oled_i2c_write_char(0x7F);
+    return rc;
 }
 
 static uint8_t cmd_set_entire_display(OledEntireDisplay ed) {
@@ -183,7 +132,7 @@ static uint8_t cmd_set_entire_display(OledEntireDisplay ed) {
     return rc;
 }
 
-static void cmd_set_display_mode(OledMode mode) {
+static uint8_t cmd_set_display_mode(OledMode mode) {
     uint8_t rc = 1;
     char command[1];
     switch(mode) {
@@ -355,7 +304,7 @@ static uint8_t cmd_set_mux_ratio(uint8_t mux_ratio) {
     return rc;
 }
 
-static uint8_t set_com_osd(OledOSDMode osd_mode) {
+static uint8_t cmd_set_com_osd(OledOSDMode osd_mode) {
     /* Set COM output scan direction */
     uint8_t rc;
     uint8_t command[1] = { osd_mode };
@@ -363,33 +312,34 @@ static uint8_t set_com_osd(OledOSDMode osd_mode) {
     return rc;
 }
 
-static uint8_t set_display_offset(uint8_t offset) {
+static uint8_t cmd_set_display_offset(uint8_t offset) {
     uint8_t rc;
     uint8_t command[2] = { 0xD3, offset & 0x3F };
     rc = oled_i2c_write_datablock(command, sizeof(command));
     return rc;
 }
 
-static uint8_t set_com_pins(uint8_t pin_conf, uint8_t lr_remap) {
+static uint8_t cmd_set_com_pins(uint8_t pin_conf, uint8_t lr_remap) {
     uint8_t rc;
-    uint8_t pin_hw_conf = 0x2;
-    pin_hw_conf |= (pin_conf & 0x1) << 4;
-    pin_hw_conf |= (lr_remap & 0x1) << 5;
-    uint8_t command[2] = { 0xDA, pin_hw_conf};
+    uint8_t pin_hw_conf = 0x10;
+    // @ToDo: Fix it
+    // pin_hw_conf |= (pin_conf & 0x1) << 4;
+    // pin_hw_conf |= (lr_remap & 0x1) << 5;
+    uint8_t command[2] = { 0xDA, pin_hw_conf };
     rc = oled_i2c_write_datablock(command, sizeof(command));
     return rc;
 }
 
-static uint8_t set_display_clk(uint8_t divide_ratio, uint8_t osc_freq) {
+static uint8_t cmd_set_display_clk(uint8_t divide_ratio, uint8_t osc_freq) {
     uint8_t rc;
     uint8_t clk_conf = divide_ratio & 0xF;
     clk_conf |= (osc_freq & 0xF) << 4;
-    uint8_t command[2] = { 0xD5, clk_conf};
+    uint8_t command[2] = { 0xD5, clk_conf };
     rc = oled_i2c_write_datablock(command, sizeof(command));
     return rc;
 }
 
-static uint8_t set_pre_charge_per(uint8_t phase_1, uint8_t phase_2) {
+static uint8_t cmd_set_pre_charge_per(uint8_t phase_1, uint8_t phase_2) {
     uint8_t rc;
     uint8_t pre_charge_per = phase_1 & 0xF;
     pre_charge_per |= (phase_2 & 0xF) << 4;
@@ -398,9 +348,16 @@ static uint8_t set_pre_charge_per(uint8_t phase_1, uint8_t phase_2) {
     return rc;
 }
 
-static uint8_t set_vcomh_deselect_lvl(uint8_t deselect_lvl) {
+static uint8_t cmd_set_vcomh_deselect_lvl(uint8_t deselect_lvl) {
     uint8_t rc;
     uint8_t command[2] = { 0xDB, (deselect_lvl << 4) & 0x70 };
+    rc = oled_i2c_write_datablock(command, sizeof(command));
+    return rc;
+}
+
+static uint8_t cmd_set_charge_pump(OledChargePump setting) {
+    uint8_t rc;
+    uint8_t command[2] = { 0x8D, setting };
     rc = oled_i2c_write_datablock(command, sizeof(command));
     return rc;
 }
@@ -431,14 +388,6 @@ static uint32_t oled_i2c_set_cursor(uint8_t x, uint8_t y) {
     return NULL;
 }
 
-// static uint32_t oled_i2c_display_block(const char *buff, ssize_t len) {
-//     uint32_t rc = i2c_smbus_write_block_data(client, 0x40, 6 * len);
-//     if (rc < 0) {
-//         KERNEL_OUT("Failed to send command");
-//     }
-//     return rc;
-// }
-
 static uint32_t oled_i2c_write_char(uint8_t value) {
     uint32_t rc = i2c_smbus_write_block_data(client, 0x40, 6,
         oled_font_8x6 + (value * CHAR_WIDTH));
@@ -459,6 +408,7 @@ static uint32_t oled_i2c_clear_screen(void) {
 
 static uint32_t oled_i2c_write_datablock(const char *buff, ssize_t len) {
     uint32_t rc = i2c_smbus_write_block_data(client, 0x00, len, buff);
+    KERNEL_OUT("Current command: %d", len);
     if (rc < 0) {
         KERNEL_OUT("Failed to send datablock")
     }
@@ -491,15 +441,46 @@ static int32_t __init oled_init(void) {
         return -ECANCELED;
     }
     i2c_add_driver(&oled_drv);
-    
-    oled_i2c_write_datablock(INIT_SEQ, sizeof(INIT_SEQ));
+
+    if (cmd_set_mux_ratio(0x3F) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_display_offset(0x0) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_display_sl(0x40) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_page_addr(OLED_PAGE0, OLED_PAGE7) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_seg_remap(0x1) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_com_osd(OLED_OSD_NORMAL) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_com_pins(0, 2) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_contrast_ctrl(0xFF) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_mem_addr_mode(OLED_MM_HRZ_AM) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_entire_display(OLED_RESUME_TO_RAM) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_display_mode(OLED_MODE_NORMAL) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_display_clk(0, 8) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_charge_pump(OLED_CHARGE_PUMP_ENABLE) != 0)
+        goto INIT_ERROR;
+    if (cmd_set_display(OLED_POWER_ON) != 0)
+        goto INIT_ERROR;
+
     (void) is_busy;
     return 0;
+
+INIT_ERROR:
+    KERNEL_OUT("An error has occurred during module initialization");
+    return 1;
 }
 
 static void __exit oled_exit(void) {
     oled_i2c_clear_display(0);
-    //oled_i2c_clear_screen();
     oled_i2c_display(0xE4);
     unregister_chrdev(major, DEV_NAME);
     i2c_unregister_device(client);

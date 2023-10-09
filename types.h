@@ -73,3 +73,10 @@ typedef enum {
     OLED_OSD_NORMAL = 0xA0,
     OLED_OSD_REMAP = 0xA8
 } OledOSDMode;
+
+typedef enum {
+    OLED_CHARGE_PUMP_DISABLE = 0x10,
+    OLED_CHARGE_PUMP_ENABLE = 0x14
+} OledChargePump;
+
+typedef uint8_t (*cmd_fptr)(void);
